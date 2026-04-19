@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CCA Trial Navigator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="header-inner">
+        <div class="logo">
+          <span class="logo-mark"></span>
+          <span class="logo-text">CCA Navigator</span>
+        </div>
+        <p class="tagline">Finding clinical trials for cholangiocarcinoma patients &amp; families</p>
+      </div>
+    </header>
+
+    <main>
+      <section id="screen-intake" class="screen active">
+        <div class="screen-inner">
+          <div class="intro">
+            <h1>You shouldn't have to navigate this alone.</h1>
+            <p>Tell us a little about your situation and we'll find clinical trials that may be relevant — explained in plain English, not medical jargon.</p>
+          </div>
+          <form id="intake-form" novalidate>
+            <div class="form-section">
+              <h2>About this search</h2>
+              <div class="field">
+                <label for="for-whom">This search is for</label>
+                <select id="for-whom" name="forWhom">
+                  <option value="myself">Myself — I have CCA</option>
+                  <option value="family">A family member</option>
+                  <option value="caregiver">Someone I care for</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-section">
+              <h2>Diagnosis details</h2>
+              <div class="field-row">
+                <div class="field">
+                  <label for="cca-type">CCA type</label>
+                  <select id="cca-type" name="ccaType">
+                    <option value="">Not sure yet</option>
+                    <option value="intrahepatic">Intrahepatic (iCCA)</option>
+                    <option value="extrahepatic">Extrahepatic (eCCA)</option>
+                    <option value="perihilar">Perihilar / Klatskin</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="stage">Stage</label>
+                  <select id="stage" name="stage">
+                    <option value="">Not sure yet</option>
+                    <option value="I">Stage I</option>
+                    <option value="II">Stage II</option>
+                    <option value="III">Stage III</option>
+                    <option value="IV">Stage IV / metastatic</option>
+                    <option value="recurrent">Recurrent</option>
+                  </select>
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="age">Age</label>
+                  <input type="number" id="age" name="age" placeholder="e.g. 62" min="18" max="100" />
+                </div>
+                <div class="field">
+                  <label for="zip">ZIP code <span class="label-hint">(for nearby trials)</span></label>
+                  <input type="text" id="zip" name="zip" placeholder="e.g. 10001" maxlength="5" />
+                </div>
+              </div>
+            </div>
+            <div class="form-section">
+              <h2>Prior treatments</h2>
+              <p class="section-hint">Select all that apply.</p>
+              <div class="checkbox-grid" id="treatments">
+                <label class="checkbox-label"><input type="checkbox" value="surgery" /> Surgery</label>
+                <label class="checkbox-label"><input type="checkbox" value="chemotherapy" /> Chemotherapy</label>
+                <label class="checkbox-label"><input type="checkbox" value="gemcitabine" /> Gemcitabine</label>
+                <label class="checkbox-label"><input type="checkbox" value="cisplatin" /> Cisplatin</label>
+                <label class="checkbox-label"><input type="checkbox" value="immunotherapy" /> Immunotherapy</label>
+                <label class="checkbox-label"><input type="checkbox" value="targeted" /> Targeted therapy</label>
+                <label class="checkbox-label"><input type="checkbox" value="radiation" /> Radiation</label>
+                <label class="checkbox-label"><input type="checkbox" value="none" /> None yet</label>
+              </div>
+            </div>
+            <div class="form-section">
+              <h2>Anything else? <span class="optional">(optional)</span></h2>
+              <div class="field">
+                <label for="freetext">Mutations, biomarkers, current medications, or anything your doctor has mentioned</label>
+                <textarea id="freetext" name="freetext" placeholder="e.g. IDH1 mutation, FGFR2 fusion, currently on gem/cis..."></textarea>
+              </div>
+            </div>
+            <div id="form-error" class="form-error" style="display:none;"></div>
+            <button type="submit" class="btn-submit">
+              <span class="btn-text">Find matching trials</span>
+              <span class="btn-arrow">→</span>
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <section id="screen-loading" class="screen">
+        <div class="loading-inner">
+          <div class="loading-animation">
+            <div class="pulse-ring"></div>
+            <div class="pulse-dot"></div>
+          </div>
+          <p class="loading-msg" id="loading-msg">Searching ClinicalTrials.gov...</p>
+          <p class="loading-sub">This usually takes 10–20 seconds.</p>
+        </div>
+      </section>
+
+      <section id="screen-results" class="screen">
+        <div class="screen-inner">
+          <div class="results-header">
+            <button class="back-btn" id="back-btn">← Search again</button>
+            <h1 id="results-title">Matching trials found</h1>
+            <p id="results-sub" class="results-sub"></p>
+          </div>
+          <div id="trials-container"></div>
+          <div id="doctor-section" class="doctor-section" style="display:none;">
+            <h2>Questions to bring to your oncologist</h2>
+            <p class="section-hint">Personalized to the trials found and your profile.</p>
+            <ol id="doctor-questions"></ol>
+          </div>
+          <div class="disclaimer">
+            <p>This tool provides general information only and is not medical advice. Clinical trial eligibility must be confirmed by your medical team. Data sourced live from <a href="https://clinicaltrials.gov" target="_blank">ClinicalTrials.gov</a>.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
