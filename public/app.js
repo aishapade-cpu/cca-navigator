@@ -82,6 +82,46 @@ function toggleSave(nctId) {
   }
 }
 
+async function generateOutreach(nctId, plainTitle, btn) {
+  btn.textContent = 'Generating...';
+  btn.disabled = true;
+
+  const formData = JSON.parse(localStorage.getItem('formData') || '{}');
+  const userProfile = [
+    formData.forWhom ? `For: ${formData.forWhom}` : null,
+    formData.age ? `Age: ${formData.age}` : null,
+    formData.stage ? `Stage: ${formData.stage}` : null,
+    formData.ccaType ? `CCA type: ${formData.ccaType}` : null,
+    formData.treatments?.length ? `Prior treatments: ${formData.treatments.join(', ')}` : null,
+  ].filter(Boolean).join(', ');
+
+  try {
+    const res = await fetch('/api/outreach-message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nctId, plainTitle, userProfile }),
+    });
+    const data = await res.json();
+    const textEl = document.getElementById(`outreach-${nctId}`);
+    textEl.textContent = data.message;
+    textEl.style.display = 'block';
+    btn.style.display = 'none';
+    document.getElementById(`copy-btn-${nctId}`).style.display = 'inline-block';
+  } catch {
+    btn.textContent = 'Generate message';
+    btn.disabled = false;
+  }
+}
+
+function copyOutreach(nctId, btn) {
+  const text = document.getElementById(`outreach-${nctId}`)?.textContent;
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy message'; }, 2000);
+  });
+}
+
 function showSaved() {
   const saved = Object.values(getSaved());
   const container = document.getElementById('saved-container');
@@ -159,46 +199,21 @@ document.getElementById('intake-form').addEventListener('submit', async (e) => {
       throw new Error(data.error || 'Server error');
     }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let trialsMap = {};
+    const text = await res.text();
+    stopLoadingCycle();
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-
-      let eventType = null;
-      let eventData = null;
-
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          eventType = line.slice(7).trim();
-        } else if (line.startsWith('data: ')) {
-          try { eventData = JSON.parse(line.slice(6)); } catch { /* ignore */ }
-        } else if (line.trim() === '' && eventType && eventData !== null) {
-          if (eventType === 'trials') {
-            eventData.trials.forEach(t => { trialsMap[t.nctId] = t; });
-          } else if (eventType === 'trial-ai') {
-            if (trialsMap[eventData.nctId]) {
-              trialsMap[eventData.nctId].ai = eventData.ai;
-            }
-          } else if (eventType === 'done') {
-            stopLoadingCycle();
-            const trials = Object.values(trialsMap);
-            renderResults({ trials, doctorQuestions: eventData.doctorQuestions || [] });
-          } else if (eventType === 'error') {
-            throw new Error(eventData.message);
-          }
-          eventType = null;
-          eventData = null;
-        }
+    let doneData = null;
+    for (const line of text.split('\n')) {
+      if (line.startsWith('data: ')) {
+        try {
+          const parsed = JSON.parse(line.slice(6));
+          if (parsed.trials) doneData = parsed;
+        } catch { /* ignore */ }
       }
     }
+
+    if (!doneData) throw new Error('No results received');
+    renderResults(doneData);
   } catch (err) {
     stopLoadingCycle();
     show('screen-intake');
@@ -254,7 +269,8 @@ function renderResults(data) {
 }
 
 function renderTrialCard(trial, inSavedScreen = false) {
-  const ai = trial.ai || {};
+  const ai = trial.ai || null;
+  const hasAi = !!ai;
   const phase = trial.phases.length
     ? trial.phases.map(p => p.replace(/_/g, ' ').replace('PHASE', 'Phase')).join(', ')
     : null;
@@ -268,7 +284,7 @@ function renderTrialCard(trial, inSavedScreen = false) {
     : `toggleSave('${trial.nctId}')`;
 
   const card = document.createElement('div');
-  card.className = `trial-card ${fitClass(ai.fitScore)}`;
+  card.className = `trial-card ${hasAi ? fitClass(ai.fitScore) : ''}`;
   card.id = inSavedScreen ? '' : `trial-${trial.nctId}`;
   card._trialData = { ...trial };
   card.innerHTML = `
@@ -276,20 +292,40 @@ function renderTrialCard(trial, inSavedScreen = false) {
       <div class="trial-tags">
         <span class="tag tag-recruiting">Recruiting</span>
         ${phase ? `<span class="tag tag-phase">${phase}</span>` : ''}
-        ${ai.fitScore ? `<span class="tag ${fitTagClass(ai.fitScore)}">${ai.fitScore}</span>` : ''}
+        ${hasAi && ai.fitScore ? `<span class="tag ${fitTagClass(ai.fitScore)}">${ai.fitScore}</span>` : ''}
       </div>
       <button class="save-btn ${saved ? 'saved' : ''}" data-save-nct="${trial.nctId}" title="${saved ? 'Remove from saved' : 'Save trial'}" onclick="${saveAction}">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2z"/></svg>
       </button>
     </div>
-    <div class="trial-plain-title">${ai.plainTitle || trial.officialTitle || 'Clinical trial'}</div>
+    <div class="trial-plain-title">${hasAi && ai.plainTitle ? ai.plainTitle : trial.officialTitle || 'Clinical trial'}</div>
     <div class="trial-nct">${trial.nctId}</div>
-    ${ai.whatItIs ? `<div class="trial-what">${ai.whatItIs}</div>` : ''}
-    ${(ai.youMayQualify || ai.watchOut) ? `
+    ${!hasAi ? `<div class="trial-no-summary">We weren't able to generate a plain-language summary for this trial. <a href="${trial.url}" target="_blank" rel="noopener">View full details on ClinicalTrials.gov →</a></div>` : ''}
+    ${hasAi && ai.whatItIs ? `<div class="trial-what">${ai.whatItIs}</div>` : ''}
+    ${hasAi && (ai.youMayQualify || ai.watchOut) ? `
       <div class="qualify-blocks">
         ${ai.youMayQualify ? `<div class="qualify-block"><div class="qualify-label">You may qualify if</div><div class="qualify-text">${ai.youMayQualify}</div></div>` : ''}
         ${ai.watchOut ? `<div class="qualify-block"><div class="qualify-label">Worth checking with your doctor</div><div class="qualify-text">${ai.watchOut}</div></div>` : ''}
       </div>` : ''}
+    ${trial.contacts?.length || (hasAi && ai.outreachMessage) ? `
+    <div class="trial-contacts">
+      <div class="contacts-label">Contact the research team</div>
+      ${trial.contacts?.map(c => `
+        <div class="contact-row">
+          <span class="contact-name">${c.name}</span>
+          <div class="contact-links">
+            ${c.email ? `<a class="contact-link" href="mailto:${c.email}">${c.email}</a>` : ''}
+            ${c.phone ? `<span class="contact-phone">${c.phone}</span>` : ''}
+          </div>
+        </div>`).join('') || ''}
+      ${trial.contacts?.length ? `
+        <div class="outreach-block">
+          <div class="outreach-label">Suggested message to send</div>
+          <div class="outreach-text" id="outreach-${trial.nctId}" style="display:none"></div>
+          <button class="generate-btn" id="generate-btn-${trial.nctId}" onclick="generateOutreach('${trial.nctId}', '${(hasAi && ai.plainTitle ? ai.plainTitle : trial.officialTitle || '').replace(/'/g, "\\'")}', this)">Generate message</button>
+          <button class="copy-btn" id="copy-btn-${trial.nctId}" style="display:none" onclick="copyOutreach('${trial.nctId}', this)">Copy message</button>
+        </div>` : ''}
+    </div>` : ''}
     <div class="trial-footer">
       <span class="trial-location">${locationStr || 'Multiple US locations'}</span>
       <a class="trial-link" href="${trial.url}" target="_blank" rel="noopener">View on ClinicalTrials.gov →</a>
