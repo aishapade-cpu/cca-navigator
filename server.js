@@ -51,13 +51,20 @@ app.post('/api/find-trials', async (req, res) => {
       const p = s.protocolSection || {};
       const id = p.identificationModule || {};
       const design = p.designModule || {};
-      const locs = p.contactsLocationsModule?.locations || [];
+      const contacts = p.contactsLocationsModule || {};
+      const locs = contacts.locations || [];
+      const centralContacts = (contacts.centralContacts || []).map(c => ({
+        name: c.name,
+        email: c.email || null,
+        phone: c.phone || null,
+      }));
       return {
         nctId: id.nctId,
         officialTitle: id.briefTitle,
         phases: design.phases || [],
         locations: locs.slice(0, 4).map(l => ({ facility: l.facility, city: l.city, state: l.state })),
         url: `https://clinicaltrials.gov/study/${id.nctId}`,
+        contacts: centralContacts,
       };
     });
 
@@ -92,9 +99,10 @@ Age: ${elig.minimumAge || '18 years'} – ${elig.maximumAge || 'no max'}`;
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
+      max_tokens: 8192,
       system: `You are a compassionate clinical trial navigator helping cholangiocarcinoma patients and families understand clinical trials in plain English.
 Respond ONLY with valid JSON. No markdown, no preamble.
+You MUST include every single trial provided in your response — do not skip or omit any, even if the trial is overseas or seems less relevant. Patients deserve to know about every option.
 Return: {
   "trials": [{ "nctId": string, "plainTitle": string (max 12 words, no jargon), "whatItIs": string (1-2 warm plain-English sentences), "youMayQualify": string (2-3 plain-English conditions this patient likely meets), "watchOut": string (1-2 key things to check with their doctor), "fitScore": "good fit" | "possible fit" | "ask your doctor" }],
   "doctorQuestions": string[] (5 specific personalized questions to bring to their oncologist)
@@ -104,28 +112,42 @@ Return: {
 
     let parsed;
     try {
-      const raw = message.content[0].text.replace(/```json|```/g, '').trim();
+      const raw = message.content[0].text.replace(/```json|```/g, '').trim().replace(/[\r\n]+/g, ' ');
       parsed = JSON.parse(raw);
-    } catch {
-      throw new Error('Failed to parse AI response');
+    } catch (e) {
+      throw new Error(`Failed to parse AI response: ${e.message}`);
     }
 
     const aiMap = {};
     (parsed.trials || []).forEach(t => { aiMap[t.nctId] = t; });
 
-    stubs.forEach(trial => {
-      if (aiMap[trial.nctId]) {
-        send('trial-ai', { nctId: trial.nctId, ai: aiMap[trial.nctId] });
-      }
-    });
+    const enrichedTrials = stubs.map(trial => ({
+      ...trial,
+      ai: aiMap[trial.nctId] || null,
+    }));
 
-    send('done', { doctorQuestions: parsed.doctorQuestions || [] });
+    send('done', { trials: enrichedTrials, doctorQuestions: parsed.doctorQuestions || [] });
     res.end();
 
   } catch (err) {
     console.error('Error:', err);
     send('error', { message: err.message });
     res.end();
+  }
+});
+
+app.post('/api/outreach-message', async (req, res) => {
+  const { nctId, plainTitle, userProfile } = req.body;
+  try {
+    const message = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 300,
+      system: `You write warm, brief emails for cancer patients contacting clinical trial teams. Respond with ONLY the email text, no subject line, no explanation.`,
+      messages: [{ role: 'user', content: `Write a 2-sentence email from a patient/family member asking about eligibility for trial ${nctId} ("${plainTitle}"). Patient profile: ${userProfile}. Sign off as "A patient inquiry via CCA Navigator".` }]
+    });
+    res.json({ message: message.content[0].text.trim() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
