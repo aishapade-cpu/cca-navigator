@@ -239,8 +239,15 @@ function fitTagClass(score) {
   return 'tag-fit-ask';
 }
 
+const fitOrder = { 'good fit': 0, 'possible fit': 1, 'ask your doctor': 2 };
+
 function renderResults(data) {
-  const { trials, doctorQuestions } = data;
+  const { doctorQuestions } = data;
+  const trials = [...(data.trials || [])].sort((a, b) => {
+    const aScore = fitOrder[a.ai?.fitScore] ?? 3;
+    const bScore = fitOrder[b.ai?.fitScore] ?? 3;
+    return aScore - bScore;
+  });
 
   document.getElementById('results-title').textContent =
     trials.length ? `${trials.length} matching trial${trials.length !== 1 ? 's' : ''} found` : 'No trials found right now';
