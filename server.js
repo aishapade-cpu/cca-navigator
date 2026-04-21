@@ -67,7 +67,7 @@ Age: ${elig.minimumAge || '18 years'} – ${elig.maximumAge || 'no max'}`;
     ].filter(Boolean).join('\n');
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 2000,
       system: `You are a compassionate clinical trial navigator helping cholangiocarcinoma patients and families understand clinical trials in plain English.
 Respond ONLY with valid JSON. No markdown, no preamble.
