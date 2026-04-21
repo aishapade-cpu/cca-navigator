@@ -370,6 +370,49 @@ textarea {
 
 .trial-card:hover { border-color: var(--border-strong); }
 
+.trial-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 0.75rem;
+}
+
+.trial-card-header .trial-tags { margin-bottom: 0; }
+
+.save-btn {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 7px;
+  cursor: pointer;
+  color: var(--ink-faint);
+  display: flex;
+  align-items: center;
+  transition: all 0.15s;
+}
+
+.save-btn:hover { border-color: var(--teal-mid); color: var(--teal); }
+.save-btn.saved { background: var(--teal-light); border-color: var(--teal-mid); color: var(--teal); }
+
+.saved-link {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: var(--teal-light);
+  color: var(--teal);
+  border: 1px solid var(--teal-mid);
+  border-radius: 20px;
+  padding: 4px 14px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.saved-link:hover { opacity: 0.8; }
+
 .trial-card.fit-good { border-left: 3px solid var(--teal-mid); }
 .trial-card.fit-possible { border-left: 3px solid var(--amber); }
 .trial-card.fit-ask { border-left: 3px solid var(--border-strong); }
@@ -378,7 +421,6 @@ textarea {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
-  margin-bottom: 0.75rem;
 }
 
 .tag {
@@ -394,6 +436,20 @@ textarea {
 .tag-fit-good { background: var(--teal-light); color: var(--teal); }
 .tag-fit-possible { background: var(--amber-light); color: var(--amber); }
 .tag-fit-ask { background: #F4F2EE; color: var(--ink-muted); }
+.tag-analyzing { background: #F4F2EE; color: var(--ink-faint); }
+
+.trial-ai-placeholder {
+  font-size: 13px;
+  color: var(--ink-faint);
+  font-style: italic;
+  margin-bottom: 1rem;
+  animation: fadePulse 1.5s ease-in-out infinite;
+}
+
+@keyframes fadePulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
 
 .trial-plain-title {
   font-family: 'Lora', serif;

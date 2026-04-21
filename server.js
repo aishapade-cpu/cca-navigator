@@ -22,6 +22,12 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 app.post('/api/find-trials', async (req, res) => {
   const { age, zip, stage, ccaType, forWhom, treatments, freetext } = req.body;
 
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+
   try {
     const params = new URLSearchParams({
       'query.cond': 'cholangiocarcinoma',
@@ -36,8 +42,26 @@ app.post('/api/find-trials', async (req, res) => {
     const studies = (ctData.studies || []).slice(0, 6);
 
     if (!studies.length) {
-      return res.json({ trials: [], doctorQuestions: [], totalFound: 0 });
+      send('done', { trials: [], doctorQuestions: [], totalFound: 0 });
+      res.end();
+      return;
     }
+
+    const stubs = studies.map(s => {
+      const p = s.protocolSection || {};
+      const id = p.identificationModule || {};
+      const design = p.designModule || {};
+      const locs = p.contactsLocationsModule?.locations || [];
+      return {
+        nctId: id.nctId,
+        officialTitle: id.briefTitle,
+        phases: design.phases || [],
+        locations: locs.slice(0, 4).map(l => ({ facility: l.facility, city: l.city, state: l.state })),
+        url: `https://clinicaltrials.gov/study/${id.nctId}`,
+      };
+    });
+
+    send('trials', { trials: stubs, totalFound: ctData.totalCount || studies.length });
 
     const trialSummaries = studies.map((s, i) => {
       const p = s.protocolSection || {};
@@ -89,27 +113,19 @@ Return: {
     const aiMap = {};
     (parsed.trials || []).forEach(t => { aiMap[t.nctId] = t; });
 
-    const enriched = studies.map(s => {
-      const p = s.protocolSection || {};
-      const id = p.identificationModule || {};
-      const design = p.designModule || {};
-      const locs = p.contactsLocationsModule?.locations || [];
-      const nctId = id.nctId;
-      return {
-        nctId,
-        officialTitle: id.briefTitle,
-        phases: design.phases || [],
-        locations: locs.slice(0, 4).map(l => ({ facility: l.facility, city: l.city, state: l.state })),
-        url: `https://clinicaltrials.gov/study/${nctId}`,
-        ai: aiMap[nctId] || null,
-      };
+    stubs.forEach(trial => {
+      if (aiMap[trial.nctId]) {
+        send('trial-ai', { nctId: trial.nctId, ai: aiMap[trial.nctId] });
+      }
     });
 
-    res.json({ trials: enriched, doctorQuestions: parsed.doctorQuestions || [], totalFound: ctData.totalCount || studies.length });
+    send('done', { doctorQuestions: parsed.doctorQuestions || [] });
+    res.end();
 
   } catch (err) {
     console.error('Error:', err);
-    res.status(500).json({ error: err.message });
+    send('error', { message: err.message });
+    res.end();
   }
 });
 
