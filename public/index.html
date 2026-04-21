@@ -17,6 +17,7 @@
           <span class="logo-text">CCA Navigator</span>
         </div>
         <p class="tagline">Finding clinical trials for cholangiocarcinoma patients &amp; families</p>
+        <button class="saved-link" id="saved-link" onclick="showSaved()" style="display:none">Saved <span id="saved-count">0</span></button>
       </div>
     </header>
 
@@ -112,6 +113,17 @@
           </div>
           <p class="loading-msg" id="loading-msg">Searching ClinicalTrials.gov...</p>
           <p class="loading-sub">This usually takes 10–20 seconds.</p>
+        </div>
+      </section>
+
+      <section id="screen-saved" class="screen">
+        <div class="screen-inner">
+          <div class="results-header">
+            <button class="back-btn" id="saved-back-btn">← Back to results</button>
+            <h1>Saved trials</h1>
+            <p class="results-sub">Trials you've bookmarked for follow-up.</p>
+          </div>
+          <div id="saved-container"></div>
         </div>
       </section>
 
