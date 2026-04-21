@@ -1,5 +1,38 @@
 const API_BASE = '';
 
+// --- Form persistence ---
+
+function saveFormData() {
+  const data = {
+    forWhom: document.getElementById('for-whom').value,
+    ccaType: document.getElementById('cca-type').value,
+    stage: document.getElementById('stage').value,
+    age: document.getElementById('age').value,
+    zip: document.getElementById('zip').value,
+    freetext: document.getElementById('freetext').value,
+    treatments: getChecked('treatments'),
+  };
+  localStorage.setItem('formData', JSON.stringify(data));
+}
+
+function restoreFormData() {
+  try {
+    const data = JSON.parse(localStorage.getItem('formData') || '{}');
+    if (!Object.keys(data).length) return;
+    if (data.forWhom) document.getElementById('for-whom').value = data.forWhom;
+    if (data.ccaType) document.getElementById('cca-type').value = data.ccaType;
+    if (data.stage) document.getElementById('stage').value = data.stage;
+    if (data.age) document.getElementById('age').value = data.age;
+    if (data.zip) document.getElementById('zip').value = data.zip;
+    if (data.freetext) document.getElementById('freetext').value = data.freetext;
+    if (data.treatments?.length) {
+      document.querySelectorAll('#treatments input[type=checkbox]').forEach(cb => {
+        cb.checked = data.treatments.includes(cb.value);
+      });
+    }
+  } catch { /* ignore */ }
+}
+
 // --- Saved trials (localStorage) ---
 
 function getSaved() {
@@ -57,7 +90,7 @@ function showSaved() {
   if (!saved.length) {
     container.innerHTML = `<div class="empty-state"><h3>No saved trials yet</h3><p>Hit the bookmark icon on any trial to save it here.</p></div>`;
   } else {
-    saved.forEach(t => container.appendChild(renderTrialCard(t)));
+    saved.forEach(t => container.appendChild(renderTrialCard(t, true)));
   }
 
   document.getElementById('saved-back-btn').onclick = () => show('screen-results');
@@ -110,6 +143,7 @@ document.getElementById('intake-form').addEventListener('submit', async (e) => {
     treatments: getChecked('treatments'),
   };
 
+  saveFormData();
   show('screen-loading');
   startLoadingCycle();
 
@@ -128,6 +162,7 @@ document.getElementById('intake-form').addEventListener('submit', async (e) => {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let trialsMap = {};
 
     while (true) {
       const { done, value } = await reader.read();
@@ -147,16 +182,15 @@ document.getElementById('intake-form').addEventListener('submit', async (e) => {
           try { eventData = JSON.parse(line.slice(6)); } catch { /* ignore */ }
         } else if (line.trim() === '' && eventType && eventData !== null) {
           if (eventType === 'trials') {
-            stopLoadingCycle();
-            showTrialStubs(eventData);
+            eventData.trials.forEach(t => { trialsMap[t.nctId] = t; });
           } else if (eventType === 'trial-ai') {
-            updateTrialCard(eventData.nctId, eventData.ai);
-          } else if (eventType === 'done') {
-            if (eventData.doctorQuestions?.length) {
-              document.getElementById('doctor-questions').innerHTML =
-                eventData.doctorQuestions.map(q => `<li>${q}</li>`).join('');
-              document.getElementById('doctor-section').style.display = 'block';
+            if (trialsMap[eventData.nctId]) {
+              trialsMap[eventData.nctId].ai = eventData.ai;
             }
+          } else if (eventType === 'done') {
+            stopLoadingCycle();
+            const trials = Object.values(trialsMap);
+            renderResults({ trials, doctorQuestions: eventData.doctorQuestions || [] });
           } else if (eventType === 'error') {
             throw new Error(eventData.message);
           }
@@ -176,6 +210,7 @@ document.getElementById('intake-form').addEventListener('submit', async (e) => {
 document.getElementById('back-btn').addEventListener('click', () => show('screen-intake'));
 
 updateSavedUI();
+restoreFormData();
 
 function fitClass(score) {
   if (score === 'good fit') return 'fit-good';
@@ -189,8 +224,8 @@ function fitTagClass(score) {
   return 'tag-fit-ask';
 }
 
-function showTrialStubs(data) {
-  const { trials, totalFound } = data;
+function renderResults(data) {
+  const { trials, doctorQuestions } = data;
 
   document.getElementById('results-title').textContent =
     trials.length ? `${trials.length} matching trial${trials.length !== 1 ? 's' : ''} found` : 'No trials found right now';
@@ -204,86 +239,21 @@ function showTrialStubs(data) {
   if (!trials.length) {
     container.innerHTML = `<div class="empty-state"><h3>No recruiting trials at this moment</h3><p>Check back in a few weeks, or ask your oncologist about trials not yet publicly listed. The Cholangiocarcinoma Foundation also maintains a list at cholangiocarcinoma.org.</p></div>`;
   } else {
-    trials.forEach(t => container.appendChild(renderTrialStub(t)));
+    trials.forEach(t => container.appendChild(renderTrialCard(t)));
   }
 
-  document.getElementById('doctor-section').style.display = 'none';
+  if (doctorQuestions?.length) {
+    document.getElementById('doctor-questions').innerHTML =
+      doctorQuestions.map(q => `<li>${q}</li>`).join('');
+    document.getElementById('doctor-section').style.display = 'block';
+  } else {
+    document.getElementById('doctor-section').style.display = 'none';
+  }
+
   show('screen-results');
 }
 
-function renderTrialStub(trial) {
-  const phase = trial.phases.length
-    ? trial.phases.map(p => p.replace(/_/g, ' ').replace('PHASE', 'Phase')).join(', ')
-    : null;
-  const locationStr = trial.locations.slice(0, 2)
-    .map(l => [l.city, l.state].filter(Boolean).join(', '))
-    .filter(Boolean).join(' · ');
-
-  const card = document.createElement('div');
-  card.className = 'trial-card';
-  card.id = `trial-${trial.nctId}`;
-  card._trialData = { ...trial };
-  card.innerHTML = `
-    <div class="trial-card-header">
-      <div class="trial-tags">
-        <span class="tag tag-recruiting">Recruiting</span>
-        ${phase ? `<span class="tag tag-phase">${phase}</span>` : ''}
-        <span class="tag tag-analyzing">Analyzing...</span>
-      </div>
-      <button class="save-btn ${isSaved(trial.nctId) ? 'saved' : ''}" data-save-nct="${trial.nctId}" title="${isSaved(trial.nctId) ? 'Remove from saved' : 'Save trial'}" onclick="toggleSave('${trial.nctId}')">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2z"/></svg>
-      </button>
-    </div>
-    <div class="trial-plain-title">${trial.officialTitle || 'Clinical trial'}</div>
-    <div class="trial-nct">${trial.nctId}</div>
-    <div class="trial-ai-placeholder">Generating plain-language summary...</div>
-    <div class="trial-footer">
-      <span class="trial-location">${locationStr || 'Multiple US locations'}</span>
-      <a class="trial-link" href="${trial.url}" target="_blank" rel="noopener">View on ClinicalTrials.gov →</a>
-    </div>`;
-  return card;
-}
-
-function updateTrialCard(nctId, ai) {
-  const card = document.getElementById(`trial-${nctId}`);
-  if (!card) return;
-
-  card.className = `trial-card ${fitClass(ai.fitScore)}`;
-
-  // merge AI data into stored trial data
-  card._trialData = { ...card._trialData, ai };
-
-  // if this trial is saved, update saved data with AI info
-  if (isSaved(nctId)) saveTrial(card._trialData);
-
-  const analyzingTag = card.querySelector('.tag-analyzing');
-  if (analyzingTag) {
-    if (ai.fitScore) {
-      analyzingTag.className = `tag ${fitTagClass(ai.fitScore)}`;
-      analyzingTag.textContent = ai.fitScore;
-    } else {
-      analyzingTag.remove();
-    }
-  }
-
-  if (ai.plainTitle) {
-    card.querySelector('.trial-plain-title').textContent = ai.plainTitle;
-  }
-
-  let aiContent = '';
-  if (ai.whatItIs) aiContent += `<div class="trial-what">${ai.whatItIs}</div>`;
-  if (ai.youMayQualify || ai.watchOut) {
-    aiContent += `<div class="qualify-blocks">
-      ${ai.youMayQualify ? `<div class="qualify-block"><div class="qualify-label">You may qualify if</div><div class="qualify-text">${ai.youMayQualify}</div></div>` : ''}
-      ${ai.watchOut ? `<div class="qualify-block"><div class="qualify-label">Worth checking with your doctor</div><div class="qualify-text">${ai.watchOut}</div></div>` : ''}
-    </div>`;
-  }
-
-  const placeholder = card.querySelector('.trial-ai-placeholder');
-  if (placeholder) placeholder.outerHTML = aiContent;
-}
-
-function renderTrialCard(trial) {
+function renderTrialCard(trial, inSavedScreen = false) {
   const ai = trial.ai || {};
   const phase = trial.phases.length
     ? trial.phases.map(p => p.replace(/_/g, ' ').replace('PHASE', 'Phase')).join(', ')
@@ -292,8 +262,15 @@ function renderTrialCard(trial) {
     .map(l => [l.city, l.state].filter(Boolean).join(', '))
     .filter(Boolean).join(' · ');
 
+  const saved = isSaved(trial.nctId);
+  const saveAction = inSavedScreen
+    ? `unsaveTrial('${trial.nctId}'); this.closest('.trial-card').remove(); if (!document.querySelector('#saved-container .trial-card')) showSaved();`
+    : `toggleSave('${trial.nctId}')`;
+
   const card = document.createElement('div');
   card.className = `trial-card ${fitClass(ai.fitScore)}`;
+  card.id = inSavedScreen ? '' : `trial-${trial.nctId}`;
+  card._trialData = { ...trial };
   card.innerHTML = `
     <div class="trial-card-header">
       <div class="trial-tags">
@@ -301,7 +278,7 @@ function renderTrialCard(trial) {
         ${phase ? `<span class="tag tag-phase">${phase}</span>` : ''}
         ${ai.fitScore ? `<span class="tag ${fitTagClass(ai.fitScore)}">${ai.fitScore}</span>` : ''}
       </div>
-      <button class="save-btn saved" data-save-nct="${trial.nctId}" title="Remove from saved" onclick="unsaveTrial('${trial.nctId}'); this.closest('.trial-card').remove(); if (!document.querySelector('#saved-container .trial-card')) showSaved();">
+      <button class="save-btn ${saved ? 'saved' : ''}" data-save-nct="${trial.nctId}" title="${saved ? 'Remove from saved' : 'Save trial'}" onclick="${saveAction}">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2z"/></svg>
       </button>
     </div>
