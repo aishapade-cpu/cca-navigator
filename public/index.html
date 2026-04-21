@@ -12,17 +12,77 @@
   <div id="app">
     <header>
       <div class="header-inner">
-        <div class="logo">
+        <div class="logo" onclick="show('screen-landing')" style="cursor:pointer">
           <span class="logo-mark"></span>
           <span class="logo-text">CCA Navigator</span>
         </div>
-        <p class="tagline">Finding clinical trials for cholangiocarcinoma patients &amp; families</p>
+        <nav class="header-nav">
+          <button class="nav-link" onclick="show('screen-landing'); document.getElementById('about').scrollIntoView({behavior:'smooth'})">About</button>
+          <button class="nav-link nav-cta" onclick="show('screen-intake')">Find trials</button>
+        </nav>
         <button class="saved-link" id="saved-link" onclick="showSaved()" style="display:none">Saved <span id="saved-count">0</span></button>
       </div>
     </header>
 
     <main>
-      <section id="screen-intake" class="screen active">
+      <section id="screen-landing" class="screen active">
+        <div class="landing-hero">
+          <div class="landing-hero-inner">
+            <p class="landing-eyebrow">For cholangiocarcinoma patients &amp; families</p>
+            <h1 class="landing-headline">There may be a trial that could help.<br>Let's find it together.</h1>
+            <p class="landing-sub">CCA Navigator searches active clinical trials from ClinicalTrials.gov and explains each one in plain English — so you can walk into your next appointment with better questions.</p>
+            <button class="btn-submit landing-cta" onclick="show('screen-intake')">
+              <span class="btn-text">Find matching trials</span>
+              <span class="btn-arrow">→</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="landing-how">
+          <div class="landing-section-inner">
+            <h2 class="landing-section-title">How it works</h2>
+            <div class="steps">
+              <div class="step">
+                <div class="step-num">1</div>
+                <div class="step-body">
+                  <div class="step-title">Tell us about your situation</div>
+                  <div class="step-desc">CCA type, stage, and treatments you've tried. Takes about 2 minutes.</div>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-num">2</div>
+                <div class="step-body">
+                  <div class="step-title">We search ClinicalTrials.gov live</div>
+                  <div class="step-desc">Pulling actively recruiting trials in real time — not a cached list.</div>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-num">3</div>
+                <div class="step-body">
+                  <div class="step-title">Get plain-English summaries</div>
+                  <div class="step-desc">Each trial is explained clearly, with a fit score and questions to ask your oncologist.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="landing-about" id="about">
+          <div class="landing-section-inner">
+            <h2 class="landing-section-title">Why I built this</h2>
+            <div class="about-body">
+              <p>I built CCA Navigator after losing my father to cholangiocarcinoma. After exhausting every option his doctors presented, we wished we'd had a better way to find and understand what else might be out there. We found out about some trials too late, and never understood others well enough to ask the right questions.</p>
+              <p>CCA Navigator exists so that other families don't have that regret. It won't replace your medical team — but it might help you walk into your next appointment with one more option on the table.</p>
+              <p class="about-sig">— Aisha Olapade</p>
+            </div>
+            <div class="about-disclaimer">
+              This tool provides general information only and is not medical advice. Clinical trial eligibility must be confirmed by your medical team. Data sourced live from <a href="https://clinicaltrials.gov" target="_blank">ClinicalTrials.gov</a>.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="screen-intake" class="screen">
         <div class="screen-inner">
           <div class="intro">
             <h1>You shouldn't have to navigate this alone.</h1>
