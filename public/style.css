@@ -817,6 +817,12 @@ textarea {
   color: var(--ink-faint);
 }
 
+.trial-location-top {
+  font-size: 13px;
+  color: var(--ink-faint);
+  margin-bottom: 10px;
+}
+
 .trial-link {
   font-size: 12px;
   font-weight: 500;

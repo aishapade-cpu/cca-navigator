@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import Anthropic from '@anthropic-ai/sdk';
+import zipcodes from 'zipcodes';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
@@ -16,11 +17,143 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const CT_BASE = 'https://clinicaltrials.gov/api/v2/studies';
+const CT_PAGE_SIZE = 50;
+const MAX_CANDIDATE_STUDIES = 200;
+const AI_ENRICH_LIMIT = 30;
+const DEFAULT_RADIUS_MILES = 250;
+const ALLOWED_RADIUS_MILES = new Set([25, 50, 100, 250]);
+
+function toNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function haversineMiles(lat1, lon1, lat2, lon2) {
+  const toRad = deg => (deg * Math.PI) / 180;
+  const earthRadiusMiles = 3958.8;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadiusMiles * c;
+}
+
+function getStudyLocationCoords(location) {
+  const candidates = [
+    { lat: location?.geoPoint?.lat, lon: location?.geoPoint?.lon },
+    { lat: location?.geoPoint?.latitude, lon: location?.geoPoint?.longitude },
+    { lat: location?.latitude, lon: location?.longitude },
+  ];
+  for (const c of candidates) {
+    const lat = toNumber(c.lat);
+    const lon = toNumber(c.lon);
+    if (lat != null && lon != null) return { lat, lon };
+  }
+  return null;
+}
+
+function getNearestDistanceMiles(study, userCoords) {
+  if (!userCoords) return null;
+  const locations = study?.protocolSection?.contactsLocationsModule?.locations || [];
+  let min = null;
+  for (const loc of locations) {
+    const coords = getStudyLocationCoords(loc);
+    if (!coords) continue;
+    const miles = haversineMiles(userCoords.lat, userCoords.lon, coords.lat, coords.lon);
+    if (min == null || miles < min) min = miles;
+  }
+  return min;
+}
+
+function parseAgeYears(ageText) {
+  if (!ageText || typeof ageText !== 'string') return null;
+  const normalized = ageText.trim().toLowerCase();
+  if (!normalized || normalized === 'n/a') return null;
+  if (normalized.includes('child') || normalized.includes('adult') || normalized.includes('older adult')) return null;
+
+  const match = normalized.match(/(\d+(?:\.\d+)?)\s*(year|month|week|day)s?/);
+  if (!match) return null;
+
+  const value = Number(match[1]);
+  const unit = match[2];
+  if (Number.isNaN(value)) return null;
+
+  if (unit === 'year') return value;
+  if (unit === 'month') return value / 12;
+  if (unit === 'week') return value / 52;
+  if (unit === 'day') return value / 365;
+  return null;
+}
+
+function isAgeEligible(study, userAge) {
+  if (userAge == null || Number.isNaN(userAge)) return true;
+  const elig = study?.protocolSection?.eligibilityModule || {};
+  const minAgeYears = parseAgeYears(elig.minimumAge);
+  const maxAgeYears = parseAgeYears(elig.maximumAge);
+  if (minAgeYears != null && userAge < minAgeYears) return false;
+  if (maxAgeYears != null && userAge > maxAgeYears) return false;
+  return true;
+}
+
+function getRadiusMiles(radiusInput) {
+  if (radiusInput == null || radiusInput === '' || radiusInput === 'any') return null;
+  const parsed = Number(radiusInput);
+  if (!Number.isFinite(parsed)) return DEFAULT_RADIUS_MILES;
+  return ALLOWED_RADIUS_MILES.has(parsed) ? parsed : DEFAULT_RADIUS_MILES;
+}
+
+async function fetchRecruitingStudies({ userCoords = null, userZip = null, radiusMiles = DEFAULT_RADIUS_MILES } = {}) {
+  const studies = [];
+  let nextPageToken = null;
+
+  do {
+    const params = new URLSearchParams({
+      'query.cond': 'cholangiocarcinoma',
+      'filter.overallStatus': 'RECRUITING',
+      pageSize: String(CT_PAGE_SIZE),
+      format: 'json',
+    });
+    if (userCoords && radiusMiles != null) {
+      params.set('filter.geo', `distance(${userCoords.lat},${userCoords.lon},${radiusMiles}mi)`);
+    }
+    if (nextPageToken) params.set('pageToken', nextPageToken);
+
+    const ctRes = await fetch(`${CT_BASE}?${params}`);
+    if (!ctRes.ok) throw new Error(`ClinicalTrials.gov error: ${ctRes.status}`);
+
+    const ctData = await ctRes.json();
+    studies.push(...(ctData.studies || []));
+    nextPageToken = ctData.nextPageToken || null;
+  } while (nextPageToken && studies.length < MAX_CANDIDATE_STUDIES);
+
+  return studies.slice(0, MAX_CANDIDATE_STUDIES);
+}
+
+async function fetchRecruitingStudiesWithFallback({ userCoords = null, userZip = null, radiusMiles = DEFAULT_RADIUS_MILES } = {}) {
+  const withLocation = await fetchRecruitingStudies({ userCoords, userZip, radiusMiles });
+  if (withLocation.length > 0 || (!userCoords && !userZip)) {
+    return { studies: withLocation, usedLocationFilter: !!(userCoords && radiusMiles != null) || !!userZip, fellBackToNationwide: false };
+  }
+
+  // If location-filtered search yields nothing, retry nationwide so users still see options.
+  const nationwide = await fetchRecruitingStudies({ userCoords: null, userZip: null, radiusMiles: null });
+  return { studies: nationwide, usedLocationFilter: true, fellBackToNationwide: true };
+}
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
 app.post('/api/find-trials', async (req, res) => {
-  const { age, zip, stage, ccaType, forWhom, treatments, freetext } = req.body;
+  const { age, zip, radius, stage, ccaType, forWhom, treatments, freetext } = req.body;
+  const userAge = Number(age);
+  const hasUserAge = !Number.isNaN(userAge) && userAge > 0;
+  const userZip = String(zip || '').trim();
+  const userZipMatch = zipcodes.lookup(userZip);
+  const radiusMiles = getRadiusMiles(radius);
+  const userCoords = userZipMatch
+    ? { lat: userZipMatch.latitude, lon: userZipMatch.longitude }
+    : null;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -29,25 +162,52 @@ app.post('/api/find-trials', async (req, res) => {
   const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
   try {
-    const params = new URLSearchParams({
-      'query.cond': 'cholangiocarcinoma',
-      'filter.overallStatus': 'RECRUITING',
-      'pageSize': '10',
-      'format': 'json',
-    });
+    const {
+      studies: allRecruitingStudies,
+      usedLocationFilter,
+      fellBackToNationwide,
+    } = await fetchRecruitingStudiesWithFallback({ userCoords, userZip, radiusMiles });
+    const eligibleStudies = allRecruitingStudies.filter(s => isAgeEligible(s, hasUserAge ? userAge : null));
+    const rankedEligibleStudies = eligibleStudies
+      .map(study => ({
+        study,
+        nearestDistanceMiles: getNearestDistanceMiles(study, userCoords),
+      }))
+      .sort((a, b) => {
+        const aDist = a.nearestDistanceMiles ?? Number.POSITIVE_INFINITY;
+        const bDist = b.nearestDistanceMiles ?? Number.POSITIVE_INFINITY;
+        if (aDist !== bDist) return aDist - bDist;
+        const aNct = a.study?.protocolSection?.identificationModule?.nctId || '';
+        const bNct = b.study?.protocolSection?.identificationModule?.nctId || '';
+        return aNct.localeCompare(bNct);
+      });
 
-    const ctRes = await fetch(`${CT_BASE}?${params}`);
-    if (!ctRes.ok) throw new Error(`ClinicalTrials.gov error: ${ctRes.status}`);
-    const ctData = await ctRes.json();
-    const studies = (ctData.studies || []).slice(0, 6);
+    const orderedEligibleStudies = rankedEligibleStudies.map(x => x.study);
+    const distanceByNctId = Object.fromEntries(
+      rankedEligibleStudies.map(x => [
+        x.study?.protocolSection?.identificationModule?.nctId,
+        x.nearestDistanceMiles,
+      ]).filter(([id]) => !!id)
+    );
+    const studiesForAi = orderedEligibleStudies.slice(0, AI_ENRICH_LIMIT);
 
-    if (!studies.length) {
-      send('done', { trials: [], doctorQuestions: [], totalFound: 0 });
+    if (!orderedEligibleStudies.length) {
+      send('done', {
+        trials: [],
+        doctorQuestions: [],
+        counts: {
+          retrieved: allRecruitingStudies.length,
+          filteredOutByAge: allRecruitingStudies.length,
+          eligible: 0,
+          aiEnriched: 0,
+          displayed: 0,
+        },
+      });
       res.end();
       return;
     }
 
-    const stubs = studies.map(s => {
+    const stubs = orderedEligibleStudies.map(s => {
       const p = s.protocolSection || {};
       const id = p.identificationModule || {};
       const design = p.designModule || {};
@@ -62,15 +222,33 @@ app.post('/api/find-trials', async (req, res) => {
         nctId: id.nctId,
         officialTitle: id.briefTitle,
         phases: design.phases || [],
-        locations: locs.slice(0, 4).map(l => ({ facility: l.facility, city: l.city, state: l.state })),
+        locations: (userCoords
+          ? [...locs].sort((a, b) => {
+              const da = (() => { const c = getStudyLocationCoords(a); return c ? haversineMiles(userCoords.lat, userCoords.lon, c.lat, c.lon) : Infinity; })();
+              const db = (() => { const c = getStudyLocationCoords(b); return c ? haversineMiles(userCoords.lat, userCoords.lon, c.lat, c.lon) : Infinity; })();
+              return da - db;
+            })
+          : locs).slice(0, 4).map(l => ({ facility: l.facility, city: l.city, state: l.state })),
+        nearestDistanceMiles: distanceByNctId[id.nctId] ?? null,
         url: `https://clinicaltrials.gov/study/${id.nctId}`,
         contacts: centralContacts,
       };
     });
 
-    send('trials', { trials: stubs, totalFound: ctData.totalCount || studies.length });
+    send('trials', {
+      trials: stubs,
+      counts: {
+        retrieved: allRecruitingStudies.length,
+        filteredOutByAge: allRecruitingStudies.length - orderedEligibleStudies.length,
+        eligible: orderedEligibleStudies.length,
+        aiEnriched: Math.min(studiesForAi.length, AI_ENRICH_LIMIT),
+        displayed: stubs.length,
+        usedLocationFilter,
+        fellBackToNationwide,
+      },
+    });
 
-    const trialSummaries = studies.map((s, i) => {
+    const trialSummaries = studiesForAi.map((s, i) => {
       const p = s.protocolSection || {};
       const id = p.identificationModule || {};
       const elig = p.eligibilityModule || {};
@@ -126,7 +304,19 @@ Return: {
       ai: aiMap[trial.nctId] || null,
     }));
 
-    send('done', { trials: enrichedTrials, doctorQuestions: parsed.doctorQuestions || [] });
+    send('done', {
+      trials: enrichedTrials,
+      doctorQuestions: parsed.doctorQuestions || [],
+      counts: {
+        retrieved: allRecruitingStudies.length,
+        filteredOutByAge: allRecruitingStudies.length - orderedEligibleStudies.length,
+        eligible: orderedEligibleStudies.length,
+        aiEnriched: studiesForAi.length,
+        displayed: enrichedTrials.length,
+        usedLocationFilter,
+        fellBackToNationwide,
+      },
+    });
     res.end();
 
   } catch (err) {

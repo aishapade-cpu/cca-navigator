@@ -9,6 +9,7 @@ function saveFormData() {
     stage: document.getElementById('stage').value,
     age: document.getElementById('age').value,
     zip: document.getElementById('zip').value,
+    radius: document.getElementById('radius').value,
     freetext: document.getElementById('freetext').value,
     treatments: getChecked('treatments'),
   };
@@ -24,6 +25,7 @@ function restoreFormData() {
     if (data.stage) document.getElementById('stage').value = data.stage;
     if (data.age) document.getElementById('age').value = data.age;
     if (data.zip) document.getElementById('zip').value = data.zip;
+    if (data.radius) document.getElementById('radius').value = data.radius;
     if (data.freetext) document.getElementById('freetext').value = data.freetext;
     if (data.treatments?.length) {
       document.querySelectorAll('#treatments input[type=checkbox]').forEach(cb => {
@@ -179,6 +181,7 @@ document.getElementById('intake-form').addEventListener('submit', async (e) => {
     stage: document.getElementById('stage').value,
     age: document.getElementById('age').value,
     zip: document.getElementById('zip').value,
+    radius: document.getElementById('radius').value,
     freetext: document.getElementById('freetext').value,
     treatments: getChecked('treatments'),
   };
@@ -242,8 +245,11 @@ function fitTagClass(score) {
 const fitOrder = { 'good fit': 0, 'possible fit': 1, 'ask your doctor': 2 };
 
 function renderResults(data) {
-  const { doctorQuestions } = data;
+  const { doctorQuestions, counts } = data;
   const trials = [...(data.trials || [])].sort((a, b) => {
+    const aDistance = Number.isFinite(a.nearestDistanceMiles) ? a.nearestDistanceMiles : Number.POSITIVE_INFINITY;
+    const bDistance = Number.isFinite(b.nearestDistanceMiles) ? b.nearestDistanceMiles : Number.POSITIVE_INFINITY;
+    if (aDistance !== bDistance) return aDistance - bDistance;
     const aScore = fitOrder[a.ai?.fitScore] ?? 3;
     const bScore = fitOrder[b.ai?.fitScore] ?? 3;
     return aScore - bScore;
@@ -251,9 +257,15 @@ function renderResults(data) {
 
   document.getElementById('results-title').textContent =
     trials.length ? `${trials.length} matching trial${trials.length !== 1 ? 's' : ''} found` : 'No trials found right now';
-  document.getElementById('results-sub').textContent = trials.length
-    ? 'Showing recruiting trials that may be relevant. Always confirm eligibility with your oncologist.'
-    : 'ClinicalTrials.gov updates regularly — check back soon.';
+
+  const subEl = document.getElementById('results-sub');
+  if (counts?.fellBackToNationwide) {
+    subEl.innerHTML = 'No trials found within your selected radius — showing all US trials instead. <strong>Consider widening your search radius or selecting "Any distance."</strong>';
+  } else {
+    subEl.textContent = trials.length
+      ? 'Showing recruiting trials that may be relevant. Always confirm eligibility with your oncologist.'
+      : 'ClinicalTrials.gov updates regularly — check back soon.';
+  }
 
   const container = document.getElementById('trials-container');
   container.innerHTML = '';
@@ -284,6 +296,9 @@ function renderTrialCard(trial, inSavedScreen = false) {
   const locationStr = trial.locations.slice(0, 2)
     .map(l => [l.city, l.state].filter(Boolean).join(', '))
     .filter(Boolean).join(' · ');
+  const distanceText = Number.isFinite(trial.nearestDistanceMiles)
+    ? `${Math.round(trial.nearestDistanceMiles)} mi`
+    : null;
 
   const saved = isSaved(trial.nctId);
   const saveAction = inSavedScreen
@@ -305,6 +320,7 @@ function renderTrialCard(trial, inSavedScreen = false) {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2z"/></svg>
       </button>
     </div>
+    <div class="trial-location-top">📍 ${locationStr || 'Multiple US locations'}${distanceText ? ` · ${distanceText}` : ''}</div>
     <div class="trial-plain-title">${hasAi && ai.plainTitle ? ai.plainTitle : trial.officialTitle || 'Clinical trial'}</div>
     <div class="trial-nct">${trial.nctId}</div>
     ${!hasAi ? `<div class="trial-no-summary">We weren't able to generate a plain-language summary for this trial. <a href="${trial.url}" target="_blank" rel="noopener">View full details on ClinicalTrials.gov →</a></div>` : ''}
@@ -334,7 +350,6 @@ function renderTrialCard(trial, inSavedScreen = false) {
         </div>` : ''}
     </div>` : ''}
     <div class="trial-footer">
-      <span class="trial-location">${locationStr || 'Multiple US locations'}</span>
       <a class="trial-link" href="${trial.url}" target="_blank" rel="noopener">View on ClinicalTrials.gov →</a>
     </div>`;
   return card;
