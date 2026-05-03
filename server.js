@@ -255,7 +255,15 @@ app.post('/api/find-trials', async (req, res) => {
       const desc = p.descriptionModule || {};
       const design = p.designModule || {};
       const locs = p.contactsLocationsModule?.locations || [];
-      const locationStr = locs.slice(0, 3).map(l => [l.city, l.state].filter(Boolean).join(', ')).join(' | ');
+      const sortedLocs = userCoords
+        ? [...locs].sort((a, b) => {
+            const ca = getStudyLocationCoords(a); const cb = getStudyLocationCoords(b);
+            const da = ca ? haversineMiles(userCoords.lat, userCoords.lon, ca.lat, ca.lon) : Infinity;
+            const db = cb ? haversineMiles(userCoords.lat, userCoords.lon, cb.lat, cb.lon) : Infinity;
+            return da - db;
+          })
+        : locs;
+      const locationStr = sortedLocs.slice(0, 3).map(l => [l.city, l.state].filter(Boolean).join(', ')).join(' | ');
       return `[${i + 1}] NCT ID: ${id.nctId}
 Title: ${id.briefTitle}
 Phase: ${(design.phases || []).join(', ')}
