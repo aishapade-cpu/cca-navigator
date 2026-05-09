@@ -150,6 +150,20 @@
                   <option value="any">Any distance</option>
                 </select>
               </div>
+              <div class="field">
+                <label>Has the cancer spread? <span class="label-hint">(select all that apply)</span></label>
+                <div class="checkbox-grid" id="metastases">
+                  <label class="checkbox-label"><input type="checkbox" value="liver" /> Liver</label>
+                  <label class="checkbox-label"><input type="checkbox" value="lymph nodes" /> Lymph nodes</label>
+                  <label class="checkbox-label"><input type="checkbox" value="peritoneum" /> Abdomen / belly lining (peritoneum)</label>
+                  <label class="checkbox-label"><input type="checkbox" value="lungs" /> Lungs</label>
+                  <label class="checkbox-label"><input type="checkbox" value="bone" /> Bone</label>
+                  <label class="checkbox-label"><input type="checkbox" value="adrenal glands" /> Adrenal glands</label>
+                  <label class="checkbox-label"><input type="checkbox" value="not spread" /> Hasn't spread / localized</label>
+                  <label class="checkbox-label"><input type="checkbox" value="not sure" /> Not sure</label>
+                </div>
+                <input type="text" id="metastases-other" placeholder="Other location (e.g. brain)" style="margin-top: 0.5rem;" />
+              </div>
             </div>
             <div class="form-section">
               <h2>Prior treatments</h2>
@@ -171,6 +185,10 @@
                 <label for="freetext">Mutations, biomarkers, current medications, or anything your doctor has mentioned</label>
                 <textarea id="freetext" name="freetext" placeholder="e.g. IDH1 mutation, FGFR2 fusion, currently on gem/cis..."></textarea>
               </div>
+              <label class="checkbox-label biomarker-filter-label" id="biomarker-filter-wrap" style="display:none">
+                <input type="checkbox" id="biomarker-only" name="biomarkerOnly" />
+                Only show trials that specifically mention my biomarkers / mutations
+              </label>
             </div>
             <div id="form-error" class="form-error" style="display:none;"></div>
             <button type="submit" class="btn-submit">

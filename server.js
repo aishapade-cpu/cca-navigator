@@ -97,6 +97,49 @@ function isAgeEligible(study, userAge) {
   return true;
 }
 
+const METASTASIS_SYNONYMS = {
+  peritoneum: ['peritoneal', 'peritoneum', 'peritoneal carcinomatosis', 'pipac'],
+  liver: ['liver', 'hepatic', 'intrahepatic metastasis'],
+  lungs: ['lung', 'pulmonary'],
+  bone: ['bone', 'osseous', 'skeletal'],
+  'lymph nodes': ['lymph node', 'lymphatic', 'nodal'],
+  'adrenal glands': ['adrenal'],
+  brain: ['brain', 'cerebral', 'cns metastasis'],
+};
+
+const CCA_TYPE_SYNONYMS = {
+  intrahepatic: ['intrahepatic', 'icca'],
+  extrahepatic: ['extrahepatic', 'ecca', 'distal bile duct'],
+  perihilar: ['perihilar', 'klatskin', 'hilar'],
+};
+
+function scoreStudyRelevance(study, { metastases = [], freetext = '', ccaType = '' } = {}) {
+  const p = study.protocolSection || {};
+  const text = [
+    p.identificationModule?.briefTitle || '',
+    p.descriptionModule?.briefSummary || '',
+    p.eligibilityModule?.eligibilityCriteria || '',
+    (p.conditionsModule?.keywords || []).join(' '),
+  ].join(' ').toLowerCase();
+
+  let score = 0;
+
+  for (const met of metastases) {
+    const synonyms = METASTASIS_SYNONYMS[met] || [met];
+    if (synonyms.some(s => text.includes(s))) score += 3;
+  }
+
+  const freetextTerms = freetext.toLowerCase().split(/[\s,]+/).filter(t => t.length > 2);
+  for (const term of freetextTerms) {
+    if (text.includes(term)) score += 3;
+  }
+
+  const ccaSynonyms = CCA_TYPE_SYNONYMS[ccaType] || [];
+  if (ccaSynonyms.some(s => text.includes(s))) score += 1;
+
+  return score;
+}
+
 function getRadiusMiles(radiusInput) {
   if (radiusInput == null || radiusInput === '' || radiusInput === 'any') return null;
   const parsed = Number(radiusInput);
@@ -104,7 +147,7 @@ function getRadiusMiles(radiusInput) {
   return ALLOWED_RADIUS_MILES.has(parsed) ? parsed : DEFAULT_RADIUS_MILES;
 }
 
-async function fetchRecruitingStudies({ userCoords = null, userZip = null, radiusMiles = DEFAULT_RADIUS_MILES } = {}) {
+async function fetchRecruitingStudies({ userCoords = null, userZip = null, radiusMiles = DEFAULT_RADIUS_MILES, freetext = null, biomarkerOnly = false } = {}) {
   const studies = [];
   let nextPageToken = null;
 
@@ -118,6 +161,7 @@ async function fetchRecruitingStudies({ userCoords = null, userZip = null, radiu
     if (userCoords && radiusMiles != null) {
       params.set('filter.geo', `distance(${userCoords.lat},${userCoords.lon},${radiusMiles}mi)`);
     }
+    if (biomarkerOnly && freetext?.trim()) params.set('query.term', freetext.trim());
     if (nextPageToken) params.set('pageToken', nextPageToken);
 
     const ctRes = await fetch(`${CT_BASE}?${params}`);
@@ -131,21 +175,21 @@ async function fetchRecruitingStudies({ userCoords = null, userZip = null, radiu
   return studies.slice(0, MAX_CANDIDATE_STUDIES);
 }
 
-async function fetchRecruitingStudiesWithFallback({ userCoords = null, userZip = null, radiusMiles = DEFAULT_RADIUS_MILES } = {}) {
-  const withLocation = await fetchRecruitingStudies({ userCoords, userZip, radiusMiles });
+async function fetchRecruitingStudiesWithFallback({ userCoords = null, userZip = null, radiusMiles = DEFAULT_RADIUS_MILES, freetext = null, biomarkerOnly = false } = {}) {
+  const withLocation = await fetchRecruitingStudies({ userCoords, userZip, radiusMiles, freetext, biomarkerOnly });
   if (withLocation.length > 0 || (!userCoords && !userZip)) {
     return { studies: withLocation, usedLocationFilter: !!(userCoords && radiusMiles != null) || !!userZip, fellBackToNationwide: false };
   }
 
   // If location-filtered search yields nothing, retry nationwide so users still see options.
-  const nationwide = await fetchRecruitingStudies({ userCoords: null, userZip: null, radiusMiles: null });
+  const nationwide = await fetchRecruitingStudies({ userCoords: null, userZip: null, radiusMiles: null, freetext, biomarkerOnly });
   return { studies: nationwide, usedLocationFilter: true, fellBackToNationwide: true };
 }
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
 app.post('/api/find-trials', async (req, res) => {
-  const { age, zip, radius, stage, ccaType, forWhom, treatments, freetext } = req.body;
+  const { age, zip, radius, stage, ccaType, forWhom, treatments, freetext, biomarkerOnly, metastases, metastasesOther } = req.body;
   const userAge = Number(age);
   const hasUserAge = !Number.isNaN(userAge) && userAge > 0;
   const userZip = String(zip || '').trim();
@@ -166,7 +210,7 @@ app.post('/api/find-trials', async (req, res) => {
       studies: allRecruitingStudies,
       usedLocationFilter,
       fellBackToNationwide,
-    } = await fetchRecruitingStudiesWithFallback({ userCoords, userZip, radiusMiles });
+    } = await fetchRecruitingStudiesWithFallback({ userCoords, userZip, radiusMiles, freetext, biomarkerOnly });
     const eligibleStudies = allRecruitingStudies.filter(s => isAgeEligible(s, hasUserAge ? userAge : null));
     const rankedEligibleStudies = eligibleStudies
       .map(study => ({
@@ -189,7 +233,16 @@ app.post('/api/find-trials', async (req, res) => {
         x.nearestDistanceMiles,
       ]).filter(([id]) => !!id)
     );
-    const studiesForAi = orderedEligibleStudies.slice(0, AI_ENRICH_LIMIT);
+    const studiesForAi = [...orderedEligibleStudies]
+      .sort((a, b) => {
+        const aScore = scoreStudyRelevance(a, { metastases, freetext, ccaType });
+        const bScore = scoreStudyRelevance(b, { metastases, freetext, ccaType });
+        if (bScore !== aScore) return bScore - aScore;
+        const aDist = distanceByNctId[a?.protocolSection?.identificationModule?.nctId] ?? Infinity;
+        const bDist = distanceByNctId[b?.protocolSection?.identificationModule?.nctId] ?? Infinity;
+        return aDist - bDist;
+      })
+      .slice(0, AI_ENRICH_LIMIT);
 
     if (!orderedEligibleStudies.length) {
       send('done', {
@@ -273,12 +326,17 @@ Eligibility: ${(elig.eligibilityCriteria || '').substring(0, 600)}
 Age: ${elig.minimumAge || '18 years'} – ${elig.maximumAge || 'no max'}`;
     }).join('\n\n---\n\n');
 
+    const metastasesList = [
+      ...(metastases || []),
+      ...(metastasesOther?.trim() ? [metastasesOther.trim()] : []),
+    ];
     const userProfile = [
       `For: ${forWhom}`,
       age ? `Age: ${age}` : null,
       zip ? `ZIP: ${zip}` : null,
       stage ? `Stage: ${stage}` : null,
       ccaType ? `CCA type: ${ccaType}` : null,
+      metastasesList.length ? `Cancer has spread to: ${metastasesList.join(', ')}` : null,
       treatments?.length ? `Prior treatments: ${treatments.join(', ')}` : null,
       freetext ? `Additional notes: ${freetext}` : null,
     ].filter(Boolean).join('\n');
@@ -289,8 +347,9 @@ Age: ${elig.minimumAge || '18 years'} – ${elig.maximumAge || 'no max'}`;
       system: `You are a compassionate clinical trial navigator helping cholangiocarcinoma patients and families understand clinical trials in plain English.
 Respond ONLY with valid JSON. No markdown, no preamble.
 You MUST include every single trial provided in your response — do not skip or omit any, even if the trial is overseas or seems less relevant. Patients deserve to know about every option.
+In the whatItIs field, lead with plain English. Where clinical terms add value, include them in parentheses immediately after the plain-English equivalent — e.g. 'cancer spread to the belly lining (peritoneal carcinomatosis)' or 'a targeted therapy for a specific gene change (FGFR2 fusion)'. Never lead with jargon.
 Return: {
-  "trials": [{ "nctId": string, "plainTitle": string (max 12 words, no jargon), "whatItIs": string (1-2 warm plain-English sentences), "youMayQualify": string (2-3 plain-English conditions this patient likely meets), "watchOut": string (1-2 key things to check with their doctor), "fitScore": "good fit" | "possible fit" | "ask your doctor" }],
+  "trials": [{ "nctId": string, "plainTitle": string (max 12 words, no jargon), "whatItIs": string (1-2 warm plain-English sentences), "youMayQualify": string (2-3 plain-English conditions this patient likely meets), "watchOut": string (1-2 key things to check with their doctor), "fitScore": "good fit" | "possible fit" | "ask your doctor", "biomarkerMatch": boolean (true ONLY if the trial explicitly targets, requires, or is designed around a specific biomarker or mutation mentioned in the patient profile — e.g. an IDH1-inhibitor trial when the patient has an IDH1 mutation. Must be false for general CCA trials that happen to be a good fit) }],
   "doctorQuestions": string[] (5 specific personalized questions to bring to their oncologist)
 }`,
       messages: [{ role: 'user', content: `Patient profile:\n${userProfile}\n\nTrials:\n\n${trialSummaries}` }]

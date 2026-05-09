@@ -1,5 +1,14 @@
 const API_BASE = '';
 
+// Show/hide biomarker filter toggle based on freetext content
+document.addEventListener('DOMContentLoaded', () => {
+  const freetext = document.getElementById('freetext');
+  const wrap = document.getElementById('biomarker-filter-wrap');
+  freetext.addEventListener('input', () => {
+    wrap.style.display = freetext.value.trim() ? 'flex' : 'none';
+  });
+});
+
 // --- Form persistence ---
 
 function saveFormData() {
@@ -11,7 +20,10 @@ function saveFormData() {
     zip: document.getElementById('zip').value,
     radius: document.getElementById('radius').value,
     freetext: document.getElementById('freetext').value,
+    biomarkerOnly: document.getElementById('biomarker-only').checked,
     treatments: getChecked('treatments'),
+    metastases: getChecked('metastases'),
+    metastasesOther: document.getElementById('metastases-other').value,
   };
   localStorage.setItem('formData', JSON.stringify(data));
 }
@@ -26,7 +38,17 @@ function restoreFormData() {
     if (data.age) document.getElementById('age').value = data.age;
     if (data.zip) document.getElementById('zip').value = data.zip;
     if (data.radius) document.getElementById('radius').value = data.radius;
-    if (data.freetext) document.getElementById('freetext').value = data.freetext;
+    if (data.freetext) {
+      document.getElementById('freetext').value = data.freetext;
+      document.getElementById('biomarker-filter-wrap').style.display = 'flex';
+    }
+    if (data.biomarkerOnly) document.getElementById('biomarker-only').checked = data.biomarkerOnly;
+    if (data.metastases?.length) {
+      document.querySelectorAll('#metastases input[type=checkbox]').forEach(cb => {
+        cb.checked = data.metastases.includes(cb.value);
+      });
+    }
+    if (data.metastasesOther) document.getElementById('metastases-other').value = data.metastasesOther;
     if (data.treatments?.length) {
       document.querySelectorAll('#treatments input[type=checkbox]').forEach(cb => {
         cb.checked = data.treatments.includes(cb.value);
@@ -183,7 +205,10 @@ document.getElementById('intake-form').addEventListener('submit', async (e) => {
     zip: document.getElementById('zip').value,
     radius: document.getElementById('radius').value,
     freetext: document.getElementById('freetext').value,
+    biomarkerOnly: document.getElementById('biomarker-only').checked,
     treatments: getChecked('treatments'),
+    metastases: getChecked('metastases'),
+    metastasesOther: document.getElementById('metastases-other').value,
   };
 
   saveFormData();
@@ -246,13 +271,35 @@ const fitOrder = { 'good fit': 0, 'possible fit': 1, 'ask your doctor': 2 };
 
 function renderResults(data) {
   const { doctorQuestions, counts } = data;
+  const savedForm = JSON.parse(localStorage.getItem('formData') || '{}');
+  const freetextTerms = (savedForm.freetext || '').toLowerCase().split(/[\s,]+/).filter(t => t.length > 2);
+  const metastasisSynonyms = {
+    peritoneum: ['peritoneal', 'peritoneum', 'peritoneal carcinomatosis', 'pipac'],
+    liver: ['liver', 'hepatic'],
+    lungs: ['lung', 'pulmonary'],
+    bone: ['bone', 'osseous'],
+    'lymph nodes': ['lymph node', 'lymphatic', 'nodal'],
+    'adrenal glands': ['adrenal'],
+    brain: ['brain', 'cerebral'],
+  };
+  const metastasesTerms = (savedForm.metastases || []).flatMap(m => metastasisSynonyms[m] || [m]);
+  if (savedForm.metastasesOther?.trim()) metastasesTerms.push(...savedForm.metastasesOther.toLowerCase().split(/[\s,]+/).filter(t => t.length > 2));
+
+  const hasRelevanceHit = t => {
+    const text = [(t.ai?.plainTitle || ''), (t.ai?.whatItIs || ''), (t.officialTitle || '')].join(' ').toLowerCase();
+    return freetextTerms.some(term => text.includes(term)) || metastasesTerms.some(term => text.includes(term));
+  };
+
   const trials = [...(data.trials || [])].sort((a, b) => {
-    const aDistance = Number.isFinite(a.nearestDistanceMiles) ? a.nearestDistanceMiles : Number.POSITIVE_INFINITY;
-    const bDistance = Number.isFinite(b.nearestDistanceMiles) ? b.nearestDistanceMiles : Number.POSITIVE_INFINITY;
-    if (aDistance !== bDistance) return aDistance - bDistance;
     const aScore = fitOrder[a.ai?.fitScore] ?? 3;
     const bScore = fitOrder[b.ai?.fitScore] ?? 3;
-    return aScore - bScore;
+    if (aScore !== bScore) return aScore - bScore;
+    const aBio = (a.ai?.biomarkerMatch || hasRelevanceHit(a)) ? 0 : 1;
+    const bBio = (b.ai?.biomarkerMatch || hasRelevanceHit(b)) ? 0 : 1;
+    if (aBio !== bBio) return aBio - bBio;
+    const aDistance = Number.isFinite(a.nearestDistanceMiles) ? a.nearestDistanceMiles : Number.POSITIVE_INFINITY;
+    const bDistance = Number.isFinite(b.nearestDistanceMiles) ? b.nearestDistanceMiles : Number.POSITIVE_INFINITY;
+    return aDistance - bDistance;
   });
 
   document.getElementById('results-title').textContent =
@@ -336,6 +383,7 @@ function renderTrialCard(trial, inSavedScreen = false) {
     </div>
     <div class="trial-location-top">📍 ${locationStr || 'Multiple US locations'}${distanceText ? ` · ${distanceText}` : ''}</div>
     <div class="trial-plain-title">${hasAi && ai.plainTitle ? ai.plainTitle : trial.officialTitle || 'Clinical trial'}</div>
+    ${trial.officialTitle && hasAi ? `<div class="trial-official-title">${trial.officialTitle}</div>` : ''}
     <div class="trial-nct">${trial.nctId}</div>
     ${!hasAi ? `<div class="trial-no-summary">We weren't able to generate a plain-language summary for this trial. <a href="${trial.url}" target="_blank" rel="noopener">View full details on ClinicalTrials.gov →</a></div>` : ''}
     ${hasAi && ai.whatItIs ? `<div class="trial-what">${ai.whatItIs}</div>` : ''}

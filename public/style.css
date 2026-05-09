@@ -414,6 +414,8 @@ textarea {
 
 .checkbox-label:hover { border-color: var(--border-strong); }
 
+.biomarker-filter-label { margin-top: 0.5rem; }
+
 .checkbox-label input[type="checkbox"] {
   width: 15px;
   height: 15px;
@@ -645,6 +647,13 @@ textarea {
   color: var(--ink);
   line-height: 1.4;
   margin-bottom: 0.5rem;
+}
+
+.trial-official-title {
+  font-size: 12px;
+  color: var(--ink-faint);
+  font-style: italic;
+  margin-bottom: 0.25rem;
 }
 
 .trial-nct {
