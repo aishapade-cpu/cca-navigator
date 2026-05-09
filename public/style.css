@@ -619,7 +619,7 @@ textarea {
 }
 
 .tag-recruiting { background: var(--teal-light); color: var(--teal); }
-.tag-phase { background: var(--blue-light); color: var(--blue); }
+.tag-phase { background: var(--blue-light); color: var(--blue); cursor: help; }
 .tag-fit-good { background: var(--teal-light); color: var(--teal); }
 .tag-fit-possible { background: var(--amber-light); color: var(--amber); }
 .tag-fit-ask { background: #F4F2EE; color: var(--ink-muted); }

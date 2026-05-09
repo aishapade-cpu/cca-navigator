@@ -287,11 +287,25 @@ function renderResults(data) {
   show('screen-results');
 }
 
+const phaseDescriptions = {
+  '1': "Phase 1 — Early stage testing. Researchers are checking if it's safe and finding the right dose. It hasn't been proven to work yet, but some patients do respond.",
+  '2': 'Phase 2 — The treatment showed promise in Phase 1. Now researchers are testing if it actually helps and continuing to monitor safety.',
+  '3': 'Phase 3 — A large, late-stage trial comparing this treatment to the best available option today. These are often the most promising trials.',
+  '4': 'Phase 4 — The treatment is already FDA-approved. Researchers are studying its long-term effects in a broader group of patients.',
+};
+
+function phaseTooltip(phaseStr) {
+  if (/1.+2/i.test(phaseStr)) return 'Phase 1/2 — Safety and effectiveness are tested together in one combined trial. Common in cancer research.';
+  if (/2.+3/i.test(phaseStr)) return 'Phase 2/3 — A combined trial testing both whether the treatment works and how it compares to current options.';
+  const match = phaseStr.match(/\d/);
+  return match ? (phaseDescriptions[match[0]] || phaseStr) : phaseStr;
+}
+
 function renderTrialCard(trial, inSavedScreen = false) {
   const ai = trial.ai || null;
   const hasAi = !!ai;
   const phase = trial.phases.length
-    ? trial.phases.map(p => p.replace(/_/g, ' ').replace('PHASE', 'Phase')).join(', ')
+    ? trial.phases.map(p => p.replace(/_/g, ' ').replace('PHASE', 'Phase ')).join(', ')
     : null;
   const locationStr = trial.locations.slice(0, 2)
     .map(l => [l.city, l.state].filter(Boolean).join(', '))
@@ -313,7 +327,7 @@ function renderTrialCard(trial, inSavedScreen = false) {
     <div class="trial-card-header">
       <div class="trial-tags">
         <span class="tag tag-recruiting">Recruiting</span>
-        ${phase ? `<span class="tag tag-phase">${phase}</span>` : ''}
+        ${phase ? `<span class="tag tag-phase" title="${phaseTooltip(phase)}">${phase}</span>` : ''}
         ${hasAi && ai.fitScore ? `<span class="tag ${fitTagClass(ai.fitScore)}">${ai.fitScore}</span>` : ''}
       </div>
       <button class="save-btn ${saved ? 'saved' : ''}" data-save-nct="${trial.nctId}" title="${saved ? 'Remove from saved' : 'Save trial'}" onclick="${saveAction}">
