@@ -18,8 +18,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const CT_BASE = 'https://clinicaltrials.gov/api/v2/studies';
 const CT_PAGE_SIZE = 50;
-const MAX_CANDIDATE_STUDIES = 200;
-const AI_ENRICH_LIMIT = 30;
+const MAX_CANDIDATE_STUDIES = 500;
+const AI_ENRICH_LIMIT = 15;
 const DEFAULT_RADIUS_MILES = 250;
 const ALLOWED_RADIUS_MILES = new Set([25, 50, 100, 250]);
 
@@ -211,7 +211,13 @@ app.post('/api/find-trials', async (req, res) => {
       usedLocationFilter,
       fellBackToNationwide,
     } = await fetchRecruitingStudiesWithFallback({ userCoords, userZip, radiusMiles, freetext, biomarkerOnly });
-    const eligibleStudies = allRecruitingStudies.filter(s => isAgeEligible(s, hasUserAge ? userAge : null));
+    const CCA_ELIGIBILITY_TERMS = ['cholangiocarcinoma', 'bile duct', 'biliary', 'cca', 'klatskin', 'perihilar', 'intrahepatic', 'extrahepatic', 'hepatobiliary', 'biliary tract', 'solid tumor', 'solid tumour', 'malignancy', 'malignancies', 'advanced cancer', 'refractory cancer'];
+    const isCcaRelevant = s => {
+      const text = (s.protocolSection?.eligibilityModule?.eligibilityCriteria || '').toLowerCase();
+      if (!text) return true;
+      return CCA_ELIGIBILITY_TERMS.some(t => text.includes(t));
+    };
+    const eligibleStudies = allRecruitingStudies.filter(s => isAgeEligible(s, hasUserAge ? userAge : null) && isCcaRelevant(s));
     const rankedEligibleStudies = eligibleStudies
       .map(study => ({
         study,
@@ -260,10 +266,14 @@ app.post('/api/find-trials', async (req, res) => {
       return;
     }
 
+    const aiNctIds = new Set(studiesForAi.map(s => s.protocolSection?.identificationModule?.nctId));
+
     const stubs = orderedEligibleStudies.map(s => {
       const p = s.protocolSection || {};
       const id = p.identificationModule || {};
       const design = p.designModule || {};
+      const desc = p.descriptionModule || {};
+      const elig = p.eligibilityModule || {};
       const contacts = p.contactsLocationsModule || {};
       const locs = contacts.locations || [];
       const centralContacts = (contacts.centralContacts || []).map(c => ({
@@ -285,6 +295,11 @@ app.post('/api/find-trials', async (req, res) => {
         nearestDistanceMiles: distanceByNctId[id.nctId] ?? null,
         url: `https://clinicaltrials.gov/study/${id.nctId}`,
         contacts: centralContacts,
+        briefSummary: (desc.briefSummary || '').trim(),
+        minAge: elig.minimumAge || null,
+        maxAge: elig.maximumAge || null,
+        pendingAi: aiNctIds.has(id.nctId),
+        relevanceScore: scoreStudyRelevance(s, { metastases, freetext, ccaType }),
       };
     });
 
@@ -348,8 +363,15 @@ Age: ${elig.minimumAge || '18 years'} – ${elig.maximumAge || 'no max'}`;
 Respond ONLY with valid JSON. No markdown, no preamble.
 You MUST include every single trial provided in your response — do not skip or omit any, even if the trial is overseas or seems less relevant. Patients deserve to know about every option.
 In the whatItIs field, lead with plain English. Where clinical terms add value, include them in parentheses immediately after the plain-English equivalent — e.g. 'cancer spread to the belly lining (peritoneal carcinomatosis)' or 'a targeted therapy for a specific gene change (FGFR2 fusion)'. Never lead with jargon.
+
+Use this rubric for fitScore:
+"strong": The patient's profile directly fits the trial's target population — CCA type matches if the trial is type-specific; stage aligns (e.g. metastatic patient for a metastatic trial); prior treatment history fits what the trial requires or allows (e.g. patient had gem/cis and trial requires prior platinum therapy); cancer spread location matches what the trial targets (e.g. peritoneal mets for a PIPAC trial, liver mets for a hepatic arterial infusion trial); no unconfirmed required biomarker; Phase 2 or later preferred (expansion cohort or randomized = stronger signal).
+"possible": Likely relevant but something key is unconfirmed — CCA type or stage not specified by patient; treatment history partially matches but has gaps; broad basket trial where CCA is one of many eligible cancers; trial has criteria we cannot assess from the profile (ECOG performance status, lab values) but no obvious barrier.
+"check": A meaningful barrier exists — requires a specific biomarker the patient has not confirmed; treatment line mismatch (first-line only but patient has had prior treatment, or vice versa); stage mismatch (e.g. trial requires resectable disease but patient is metastatic); Phase 1 dose-escalation with no efficacy data yet; or CCA type is explicitly excluded.
+
+If a trial requires a specific biomarker or mutation that the patient has NOT confirmed in their profile, set fitScore to "check" and note in watchOut that tumor testing for that biomarker is required before enrolling.
 Return: {
-  "trials": [{ "nctId": string, "plainTitle": string (max 12 words, no jargon), "whatItIs": string (1-2 warm plain-English sentences), "youMayQualify": string (2-3 plain-English conditions this patient likely meets), "watchOut": string (1-2 key things to check with their doctor), "fitScore": "good fit" | "possible fit" | "ask your doctor", "biomarkerMatch": boolean (true ONLY if the trial explicitly targets, requires, or is designed around a specific biomarker or mutation mentioned in the patient profile — e.g. an IDH1-inhibitor trial when the patient has an IDH1 mutation. Must be false for general CCA trials that happen to be a good fit) }],
+  "trials": [{ "nctId": string, "plainTitle": string (max 12 words, no jargon), "whatItIs": string (1-2 warm plain-English sentences), "youMayQualify": string (2-3 plain-English conditions this patient likely meets), "watchOut": string (1-2 key things to check with their doctor), "fitScore": "strong" | "possible" | "check", "biomarkerMatch": boolean (true ONLY if the trial explicitly targets, requires, or is designed around a specific biomarker or mutation mentioned in the patient profile — e.g. an IDH1-inhibitor trial when the patient has an IDH1 mutation. Must be false for general CCA trials that happen to be a good fit), "requiresBiomarker": boolean (true if the trial requires the patient's tumor to be tested for or confirmed to express a specific biomarker or mutation before enrolling — regardless of whether the patient has that biomarker) }],
   "doctorQuestions": string[] (5 specific personalized questions to bring to their oncologist)
 }`,
       messages: [{ role: 'user', content: `Patient profile:\n${userProfile}\n\nTrials:\n\n${trialSummaries}` }]
@@ -390,6 +412,48 @@ Return: {
     console.error('Error:', err);
     send('error', { message: err.message });
     res.end();
+  }
+});
+
+app.post('/api/enrich-trial', async (req, res) => {
+  const { nctId, userProfile } = req.body;
+  try {
+    const ctRes = await fetch(`${CT_BASE}/${nctId}?format=json`);
+    if (!ctRes.ok) throw new Error(`CT.gov error: ${ctRes.status}`);
+    const study = await ctRes.json();
+    const p = study.protocolSection || {};
+    const id = p.identificationModule || {};
+    const elig = p.eligibilityModule || {};
+    const desc = p.descriptionModule || {};
+    const design = p.designModule || {};
+    const locs = p.contactsLocationsModule?.locations || [];
+    const locationStr = locs.slice(0, 3).map(l => [l.city, l.state].filter(Boolean).join(', ')).join(' | ');
+
+    const trialSummary = `NCT ID: ${id.nctId}
+Title: ${id.briefTitle}
+Phase: ${(design.phases || []).join(', ')}
+Locations: ${locationStr || 'Multiple US sites'}
+Summary: ${(desc.briefSummary || '').substring(0, 400)}
+Eligibility: ${(elig.eligibilityCriteria || '').substring(0, 600)}
+Age: ${elig.minimumAge || '18 years'} – ${elig.maximumAge || 'no max'}`;
+
+    const message = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
+      system: `You are a compassionate clinical trial navigator helping cholangiocarcinoma patients and families understand clinical trials in plain English.
+Respond ONLY with valid JSON. No markdown, no preamble.
+In the whatItIs field, lead with plain English. Where clinical terms add value, include them in parentheses.
+Use this rubric for fitScore — "strong": profile directly fits (CCA type, stage, treatment history, spread location all align, no unconfirmed biomarker, Phase 2+); "possible": likely relevant but something key is unconfirmed (type/stage not specified, basket trial, criteria we can't assess); "check": meaningful barrier exists (unconfirmed required biomarker, treatment line mismatch, stage mismatch, Phase 1 dose-escalation).
+If a trial requires a specific biomarker the patient has NOT confirmed, set fitScore to "check" and note in watchOut that tumor testing is required.
+Return: { "nctId": string, "plainTitle": string (max 12 words), "whatItIs": string (1-2 sentences), "youMayQualify": string (2-3 conditions), "watchOut": string (1-2 things to check), "fitScore": "strong" | "possible" | "check", "biomarkerMatch": boolean, "requiresBiomarker": boolean (true if the trial requires tumor testing for a specific biomarker before enrolling) }`,
+      messages: [{ role: 'user', content: `Patient profile:\n${userProfile}\n\nTrial:\n${trialSummary}` }],
+    });
+
+    const raw = message.content[0].text.replace(/```json|```/g, '').trim().replace(/[\r\n]+/g, ' ');
+    const ai = JSON.parse(raw);
+    res.json({ ai });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
