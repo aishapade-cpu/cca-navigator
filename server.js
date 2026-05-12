@@ -147,13 +147,15 @@ function getRadiusMiles(radiusInput) {
   return ALLOWED_RADIUS_MILES.has(parsed) ? parsed : DEFAULT_RADIUS_MILES;
 }
 
-async function fetchRecruitingStudies({ userCoords = null, userZip = null, radiusMiles = DEFAULT_RADIUS_MILES, freetext = null, biomarkerOnly = false } = {}) {
+const CCA_SEARCH_TERMS = ['cholangiocarcinoma', 'biliary tract cancer'];
+
+async function fetchStudiesByCondition({ conditionTerm, userCoords, radiusMiles, freetext, biomarkerOnly }) {
   const studies = [];
   let nextPageToken = null;
 
   do {
     const params = new URLSearchParams({
-      'query.cond': 'cholangiocarcinoma',
+      'query.cond': conditionTerm,
       'filter.overallStatus': 'RECRUITING',
       pageSize: String(CT_PAGE_SIZE),
       format: 'json',
@@ -172,7 +174,27 @@ async function fetchRecruitingStudies({ userCoords = null, userZip = null, radiu
     nextPageToken = ctData.nextPageToken || null;
   } while (nextPageToken && studies.length < MAX_CANDIDATE_STUDIES);
 
-  return studies.slice(0, MAX_CANDIDATE_STUDIES);
+  return studies;
+}
+
+async function fetchRecruitingStudies({ userCoords = null, userZip = null, radiusMiles = DEFAULT_RADIUS_MILES, freetext = null, biomarkerOnly = false } = {}) {
+  const results = await Promise.all(
+    CCA_SEARCH_TERMS.map(term => fetchStudiesByCondition({ conditionTerm: term, userCoords, radiusMiles, freetext, biomarkerOnly }))
+  );
+
+  const seen = new Set();
+  const merged = [];
+  for (const batch of results) {
+    for (const study of batch) {
+      const nctId = study?.protocolSection?.identificationModule?.nctId;
+      if (nctId && !seen.has(nctId)) {
+        seen.add(nctId);
+        merged.push(study);
+      }
+    }
+  }
+
+  return merged.slice(0, MAX_CANDIDATE_STUDIES);
 }
 
 async function fetchRecruitingStudiesWithFallback({ userCoords = null, userZip = null, radiusMiles = DEFAULT_RADIUS_MILES, freetext = null, biomarkerOnly = false } = {}) {
