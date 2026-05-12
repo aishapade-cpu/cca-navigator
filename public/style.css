@@ -639,6 +639,7 @@ textarea {
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   pointer-events: none;
 }
+.tag-observational { background: #F0F0F0; color: #666; }
 .tag-biomarker-req { background: #FEF3C7; color: #92400E; }
 .tag-fit-good { background: var(--teal-light); color: var(--teal); }
 .tag-fit-possible { background: var(--amber-light); color: var(--amber); }

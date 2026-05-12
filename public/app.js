@@ -312,6 +312,9 @@ restoreFormData();
 
 function renderPhase1(data) {
   const trials = [...(data.trials || [])].sort((a, b) => {
+    const aObs = a.isObservational ? 1 : 0;
+    const bObs = b.isObservational ? 1 : 0;
+    if (aObs !== bObs) return aObs - bObs;
     if (b.relevanceScore !== a.relevanceScore) return b.relevanceScore - a.relevanceScore;
     const aDist = Number.isFinite(a.nearestDistanceMiles) ? a.nearestDistanceMiles : Infinity;
     const bDist = Number.isFinite(b.nearestDistanceMiles) ? b.nearestDistanceMiles : Infinity;
@@ -413,6 +416,9 @@ function resortByFit(btn) {
     const aReq = (at?.ai?.requiresBiomarker && !at?.ai?.biomarkerMatch) ? 1 : 0;
     const bReq = (bt?.ai?.requiresBiomarker && !bt?.ai?.biomarkerMatch) ? 1 : 0;
     if (aReq !== bReq) return aReq - bReq;
+    const aObs = at?.isObservational ? 1 : 0;
+    const bObs = bt?.isObservational ? 1 : 0;
+    if (aObs !== bObs) return aObs - bObs;
     const aDist = Number.isFinite(at?.nearestDistanceMiles) ? at.nearestDistanceMiles : Infinity;
     const bDist = Number.isFinite(bt?.nearestDistanceMiles) ? bt.nearestDistanceMiles : Infinity;
     return aDist - bDist;
@@ -559,6 +565,7 @@ function renderTrialCard(trial, inSavedScreen = false) {
     <div class="trial-card-header">
       <div class="trial-tags">
         <span class="tag tag-recruiting">Recruiting</span>
+        ${trial.isObservational ? `<span class="tag tag-observational">Observational</span>` : ''}
         ${phase ? `<span class="tag tag-phase" data-tooltip="${phaseTooltip(phase)}">${phase}</span>` : ''}
         ${hasAi && ai.requiresBiomarker && !ai.biomarkerMatch ? `<span class="tag tag-biomarker-req">Requires tumor testing</span>` : ''}
       </div>

@@ -298,6 +298,7 @@ app.post('/api/find-trials', async (req, res) => {
         briefSummary: (desc.briefSummary || '').trim(),
         minAge: elig.minimumAge || null,
         maxAge: elig.maximumAge || null,
+        isObservational: (design.studyType || '').toUpperCase() === 'OBSERVATIONAL',
         pendingAi: aiNctIds.has(id.nctId),
         relevanceScore: scoreStudyRelevance(s, { metastases, freetext, ccaType }),
       };
@@ -364,10 +365,10 @@ Respond ONLY with valid JSON. No markdown, no preamble.
 You MUST include every single trial provided in your response — do not skip or omit any, even if the trial is overseas or seems less relevant. Patients deserve to know about every option.
 In the whatItIs field, lead with plain English. Where clinical terms add value, include them in parentheses immediately after the plain-English equivalent — e.g. 'cancer spread to the belly lining (peritoneal carcinomatosis)' or 'a targeted therapy for a specific gene change (FGFR2 fusion)'. Never lead with jargon.
 
-Use this rubric for fitScore:
-"strong": The patient's profile directly fits the trial's target population — CCA type matches if the trial is type-specific; stage aligns (e.g. metastatic patient for a metastatic trial); prior treatment history fits what the trial requires or allows (e.g. patient had gem/cis and trial requires prior platinum therapy); cancer spread location matches what the trial targets (e.g. peritoneal mets for a PIPAC trial, liver mets for a hepatic arterial infusion trial); no unconfirmed required biomarker; Phase 2 or later preferred (expansion cohort or randomized = stronger signal).
-"possible": Likely relevant but something key is unconfirmed — CCA type or stage not specified by patient; treatment history partially matches but has gaps; broad basket trial where CCA is one of many eligible cancers; trial has criteria we cannot assess from the profile (ECOG performance status, lab values) but no obvious barrier.
-"check": A meaningful barrier exists — requires a specific biomarker the patient has not confirmed; treatment line mismatch (first-line only but patient has had prior treatment, or vice versa); stage mismatch (e.g. trial requires resectable disease but patient is metastatic); Phase 1 dose-escalation with no efficacy data yet; or CCA type is explicitly excluded.
+Use this rubric for fitScore. Err toward "strong" or "possible" — only use "check" when there is a clear, explicit conflict:
+"strong": No obvious eligibility conflict and the core criteria align — the patient's stage, CCA type (if specified by the trial), and treatment history don't conflict with the trial's requirements. Spread location matching the trial's focus (e.g. peritoneal mets for a PIPAC trial) is a strong positive signal. Broad trials that accept CCA patients without specific exclusions qualify as strong if the patient's profile fits. Phase is a positive signal (Phase 2+ or expansion cohort = stronger) but not a gate — missing or early phase alone should not prevent a "strong" rating.
+"possible": Likely relevant but something meaningful is unknown — CCA type or stage not specified by patient and the trial is type- or stage-specific; treatment history unclear and the trial has treatment-line requirements; basket trial where CCA is one of many cancers and the patient's profile doesn't clearly align with the trial's focus.
+"check": An explicit conflict exists — requires a specific biomarker the patient has not confirmed; clear treatment line mismatch (e.g. trial is explicitly first-line only but patient has had prior systemic therapy, or trial requires prior treatment but patient has had none); trial explicitly excludes the patient's CCA type or stage; or the trial's eligibility criteria are written for a different cancer and CCA is only incidentally listed.
 
 If a trial requires a specific biomarker or mutation that the patient has NOT confirmed in their profile, set fitScore to "check" and note in watchOut that tumor testing for that biomarker is required before enrolling.
 Return: {
@@ -443,7 +444,7 @@ Age: ${elig.minimumAge || '18 years'} – ${elig.maximumAge || 'no max'}`;
       system: `You are a compassionate clinical trial navigator helping cholangiocarcinoma patients and families understand clinical trials in plain English.
 Respond ONLY with valid JSON. No markdown, no preamble.
 In the whatItIs field, lead with plain English. Where clinical terms add value, include them in parentheses.
-Use this rubric for fitScore — "strong": profile directly fits (CCA type, stage, treatment history, spread location all align, no unconfirmed biomarker, Phase 2+); "possible": likely relevant but something key is unconfirmed (type/stage not specified, basket trial, criteria we can't assess); "check": meaningful barrier exists (unconfirmed required biomarker, treatment line mismatch, stage mismatch, Phase 1 dose-escalation).
+Use this rubric for fitScore — err toward "strong" or "possible", only use "check" for explicit conflicts. "strong": no obvious eligibility conflict, core criteria align (stage, CCA type if specified, treatment history), phase is a positive signal but not a gate. "possible": likely relevant but something meaningful is unknown (type/stage unspecified and trial is specific, treatment history unclear, basket trial where patient's profile doesn't clearly align). "check": explicit conflict only — unconfirmed required biomarker, clear treatment line mismatch, trial explicitly excludes patient's CCA type or stage.
 If a trial requires a specific biomarker the patient has NOT confirmed, set fitScore to "check" and note in watchOut that tumor testing is required.
 Return: { "nctId": string, "plainTitle": string (max 12 words), "whatItIs": string (1-2 sentences), "youMayQualify": string (2-3 conditions), "watchOut": string (1-2 things to check), "fitScore": "strong" | "possible" | "check", "biomarkerMatch": boolean, "requiresBiomarker": boolean (true if the trial requires tumor testing for a specific biomarker before enrolling) }`,
       messages: [{ role: 'user', content: `Patient profile:\n${userProfile}\n\nTrial:\n${trialSummary}` }],
